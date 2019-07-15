@@ -17,6 +17,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -41,6 +42,7 @@ const (
 	bazelReal      = "BAZEL_REAL"
 	skipWrapperEnv = "BAZELISK_SKIP_WRAPPER"
 	wrapperPath    = "./tools/bazel"
+	defaultRemote  = "DEFAULT"
 )
 
 var (
@@ -351,7 +353,7 @@ func determineBazelFilename(version string) (string, error) {
 	return fmt.Sprintf("bazel-%s-%s-%s%s", version, osName, machineName, filenameSuffix), nil
 }
 
-func determineURL(version string, isCommit bool, filename string) string {
+func determineURL(version string, isCommit bool, filename string, remote string) string {
 	if isCommit {
 		var platforms = map[string]string{"darwin": "macos", "linux": "ubuntu1404", "windows": "windows"}
 		// No need to check the OS thanks to determineBazelFilename().
@@ -367,16 +369,20 @@ func determineURL(version string, isCommit bool, filename string) string {
 		kind = "rc" + versionComponents[1]
 	}
 
-	return fmt.Sprintf("https://releases.bazel.build/%s/%s/%s", version, kind, filename)
+	if remote == defaultRemote {
+		return fmt.Sprintf("https://releases.bazel.build/%s/%s/%s", version, kind, filename)
+	} else {
+		return fmt.Sprintf("https://github.com/%s/bazel/releases/download/%s/%s", remote, version, filename)
+	}
 }
 
-func downloadBazel(version string, isCommit bool, directory string) (string, error) {
+func downloadBazel(version string, isCommit bool, directory string, remote string) (string, error) {
 	filename, err := determineBazelFilename(version)
 	if err != nil {
 		return "", fmt.Errorf("could not determine filename to use for Bazel binary: %v", err)
 	}
 
-	url := determineURL(version, isCommit, filename)
+	url := determineURL(version, isCommit, filename, remote)
 	destinationPath := filepath.Join(directory, filename)
 
 	if _, err := os.Stat(destinationPath); err != nil {
@@ -651,12 +657,24 @@ func main() {
 		log.Fatalf("could not create directory %s: %v", bazelDirectory, err)
 	}
 
-	bazelPath, err := downloadBazel(resolvedBazelVersion, isCommit, bazelDirectory)
+	var remote string
+	flag.StringVar(&remote, "remote", "DEFAULT", "specify the source of Bazel binary")
+	flag.Parse()
+
+	args := os.Args[1:]
+
+	if remote != defaultRemote {
+		for i, s := range args {
+			if strings.Contains(s, "--remote=") {
+				args = append(args[:i], args[i+1:]...)
+			}
+		}
+	}
+
+	bazelPath, err := downloadBazel(resolvedBazelVersion, isCommit, bazelDirectory, remote)
 	if err != nil {
 		log.Fatalf("could not download Bazel: %v", err)
 	}
-
-	args := os.Args[1:]
 
 	// --strict and --migrate must be the first argument.
 	if len(args) > 0 && (args[0] == "--strict" || args[0] == "--migrate") {
