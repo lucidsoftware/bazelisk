@@ -34,6 +34,17 @@ Bazelisk currently understands the following formats for version labels:
 
 In the future we will add support for building Bazel from source at a given commit.
 
+## How does Bazelisk download release from a fork?
+
+It uses a simple algorithm:
+- If the environment variable `USE_BAZEL_REMOTE` is set, it will use the fork name specified in the value.
+- Otherwise, if a `.bazelremote` file exists in the current directory or recursively any parent directory, it will read the file and use the the fork name specified in it.
+- Otherwise it will use the official release from `bazelbuild/bazel`.
+
+Bazelisk currently follows the release convertion on `bazelbuild/bazel` to build the URL. The URL format looks like `https://github.com/<REMOTE>/bazel/releases/download/<VERSION>/<FILENAME>`.
+
+For example, if the fork name is `foobar`, the version is `0.28.0`, and the platform is `linux`. The URL will be `https://github.com/foobar/bazel/releases/download/0.28.0/bazel-0.28.0-linux-x86_64`.
+
 ## Other features
 
 The Go version of Bazelisk offers two new flags.

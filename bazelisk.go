@@ -41,6 +41,7 @@ const (
 	bazelReal      = "BAZEL_REAL"
 	skipWrapperEnv = "BAZELISK_SKIP_WRAPPER"
 	wrapperPath    = "./tools/bazel"
+	bazelUpstream  = "BAZEL_UPSTREAM"
 )
 
 var (
@@ -103,6 +104,45 @@ func getBazelVersion() (string, error) {
 	}
 
 	return "latest", nil
+}
+
+func getBazelRemote() (string, error) {
+	// Check in this order:
+	// - env var "USE_BAZEL_REMOTE" is set to a specific Bazel fork.
+	// - workspace_root/.bazelremote exists -> read contents, that fork.
+	// - fallback: Bazel official release
+	bazelRemote := os.Getenv("USE_BAZEL_REMOTE")
+	if len(bazelRemote) != 0 {
+		return bazelRemote, nil
+	}
+
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory: %v", err)
+	}
+
+	workspaceRoot := findWorkspaceRoot(workingDirectory)
+	if len(workspaceRoot) != 0 {
+		bazelRemotePath := filepath.Join(workspaceRoot, ".bazelremote")
+		if _, err := os.Stat(bazelRemotePath); err == nil {
+			f, err := os.Open(bazelRemotePath)
+			if err != nil {
+				return "", fmt.Errorf("could not read %s: %v", bazelRemotePath, err)
+			}
+			defer f.Close()
+
+			scanner := bufio.NewScanner(f)
+			scanner.Scan()
+			bazelRemote := scanner.Text()
+			if err := scanner.Err(); err != nil {
+				return "", fmt.Errorf("could not read version from file %s: %v", bazelRemote, err)
+			}
+
+			return bazelRemote, nil
+		}
+	}
+
+	return bazelUpstream, nil
 }
 
 type release struct {
@@ -351,7 +391,7 @@ func determineBazelFilename(version string) (string, error) {
 	return fmt.Sprintf("bazel-%s-%s-%s%s", version, osName, machineName, filenameSuffix), nil
 }
 
-func determineURL(version string, isCommit bool, filename string) string {
+func determineURL(version string, isCommit bool, filename string, bazelRemote string) string {
 	if isCommit {
 		var platforms = map[string]string{"darwin": "macos", "linux": "ubuntu1404", "windows": "windows"}
 		// No need to check the OS thanks to determineBazelFilename().
@@ -367,16 +407,20 @@ func determineURL(version string, isCommit bool, filename string) string {
 		kind = "rc" + versionComponents[1]
 	}
 
-	return fmt.Sprintf("https://releases.bazel.build/%s/%s/%s", version, kind, filename)
+	if bazelRemote == bazelUpstream {
+		return fmt.Sprintf("https://releases.bazel.build/%s/%s/%s", version, kind, filename)
+	} else {
+		return fmt.Sprintf("https://github.com/%s/bazel/releases/download/%s/%s", bazelRemote, version, filename)
+	}
 }
 
-func downloadBazel(version string, isCommit bool, directory string) (string, error) {
+func downloadBazel(version string, isCommit bool, directory string, bazelRemote string) (string, error) {
 	filename, err := determineBazelFilename(version)
 	if err != nil {
 		return "", fmt.Errorf("could not determine filename to use for Bazel binary: %v", err)
 	}
 
-	url := determineURL(version, isCommit, filename)
+	url := determineURL(version, isCommit, filename, bazelRemote)
 	destinationPath := filepath.Join(directory, filename)
 
 	if _, err := os.Stat(destinationPath); err != nil {
@@ -640,6 +684,11 @@ func main() {
 		log.Fatalf("could not get Bazel version: %v", err)
 	}
 
+	bazelRemote, err := getBazelRemote()
+	if err != nil {
+		log.Fatalf("could not get Bazel remote: %v", err)
+	}
+
 	resolvedBazelVersion, isCommit, err := resolveVersionLabel(bazeliskHome, bazelVersion)
 	if err != nil {
 		log.Fatalf("could not resolve the version '%s' to an actual version number: %v", bazelVersion, err)
@@ -651,7 +700,7 @@ func main() {
 		log.Fatalf("could not create directory %s: %v", bazelDirectory, err)
 	}
 
-	bazelPath, err := downloadBazel(resolvedBazelVersion, isCommit, bazelDirectory)
+	bazelPath, err := downloadBazel(resolvedBazelVersion, isCommit, bazelDirectory, bazelRemote)
 	if err != nil {
 		log.Fatalf("could not download Bazel: %v", err)
 	}
