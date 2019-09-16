@@ -6,4 +6,4 @@
 CURRENT_TAG=$(git tag -l --points-at HEAD | head -n1)
 CURRENT_COMMIT=$(git rev-parse HEAD)
 
-echo "STABLE_VERSION ${CURRENT_TAG:-$CURRENT_COMMIT}"
+echo "STABLE_VERSION v1.0.1"

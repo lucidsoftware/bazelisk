@@ -114,7 +114,11 @@ func parseBazelForkAndVersion(bazelForkAndVersion string) (string, string, error
 	versionInfo := strings.Split(bazelForkAndVersion, "/")
 
 	if len(versionInfo) == 1 {
-		bazelFork, bazelVersion = bazelUpstream, versionInfo[0]
+		bazelRemote, err := getBazelRemote()
+		if err != nil {
+			log.Fatalf("could not get Bazel remote: %v", err)
+		}
+		bazelFork, bazelVersion = bazelRemote, versionInfo[0]
 	} else if len(versionInfo) == 2 {
 		bazelFork, bazelVersion = versionInfo[0], versionInfo[1]
 	} else {
@@ -122,6 +126,45 @@ func parseBazelForkAndVersion(bazelForkAndVersion string) (string, string, error
 	}
 
 	return bazelFork, bazelVersion, nil
+}
+
+func getBazelRemote() (string, error) {
+	// Check in this order:
+	// - env var "USE_BAZEL_REMOTE" is set to a specific Bazel fork.
+	// - workspace_root/.bazelremote exists -> read contents, that fork.
+	// - fallback: Bazel official release
+	bazelRemote := os.Getenv("USE_BAZEL_REMOTE")
+	if len(bazelRemote) != 0 {
+		return bazelRemote, nil
+	}
+
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory: %v", err)
+	}
+
+	workspaceRoot := findWorkspaceRoot(workingDirectory)
+	if len(workspaceRoot) != 0 {
+		bazelRemotePath := filepath.Join(workspaceRoot, ".bazelremote")
+		if _, err := os.Stat(bazelRemotePath); err == nil {
+			f, err := os.Open(bazelRemotePath)
+			if err != nil {
+				return "", fmt.Errorf("could not read %s: %v", bazelRemotePath, err)
+			}
+			defer f.Close()
+
+			scanner := bufio.NewScanner(f)
+			scanner.Scan()
+			bazelRemote := scanner.Text()
+			if err := scanner.Err(); err != nil {
+				return "", fmt.Errorf("could not read version from file %s: %v", bazelRemote, err)
+			}
+
+			return bazelRemote, nil
+		}
+	}
+
+	return bazelUpstream, nil
 }
 
 type release struct {
